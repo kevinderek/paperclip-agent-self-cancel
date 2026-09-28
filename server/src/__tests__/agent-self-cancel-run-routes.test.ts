@@ -1,6 +1,8 @@
 import express from "express";
 import request from "supertest";
+import { getTableColumns } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { heartbeatRuns } from "../../../packages/db/src/schema/heartbeat_runs.js";
 
 const mockAgentService = vi.hoisted(() => ({ getById: vi.fn() }));
 
@@ -74,6 +76,7 @@ const CLOSED_ISSUE_ID = "44444444-4444-4444-8444-444444444444";
 const OPEN_ISSUE_ID = "55555555-5555-4555-8555-555555555555";
 const STUCK_RUN_ID = "66666666-6666-4666-8666-666666666666";
 const OBSERVER_RUN_ID = "77777777-7777-4777-8777-777777777777";
+const DECOY_RUN_ISSUE_ID = "88888888-8888-4888-8888-888888888888";
 
 function agentActor(agentId: string) {
   return {
@@ -150,13 +153,18 @@ function registerModuleMocks() {
   }));
 }
 
+/** Counts the route's issue-status lookups so a test can prove one happened. */
+let issueStatusLookups = 0;
+
 /** Chainable db stub that answers the route's single issue-status lookup. */
 function createIssueStatusDbStub(status: string | null) {
   const query = {
     from: vi.fn().mockReturnThis(),
     where: vi.fn().mockReturnThis(),
-    then: (resolve: (value: Array<{ status: string }>) => unknown) =>
-      Promise.resolve(status ? [{ status }] : []).then(resolve),
+    then: (resolve: (value: Array<{ status: string }>) => unknown) => {
+      issueStatusLookups += 1;
+      return Promise.resolve(status ? [{ status }] : []).then(resolve);
+    },
   };
   return { db: { select: vi.fn(() => query) } };
 }
@@ -219,6 +227,7 @@ describe("agent self-cancel of a run on a closed issue", () => {
     });
     mockHeartbeatService.cancelRun.mockReset();
     mockHeartbeatService.getRun.mockReset();
+    issueStatusLookups = 0;
     mockLogActivity.mockClear();
     mockHeartbeatService.cancelRun.mockImplementation(async (runId: string) => ({
       id: runId,
@@ -339,6 +348,13 @@ describe("agent self-cancel of a run on a closed issue", () => {
       companyId: COMPANY_ID,
       agentId: OWN_AGENT_ID,
       status: "running",
+      // A decoy run-level issue id, absent from the schema. It must stay unused
+      // even as a fallback: this case exists to prove the route refuses rather
+      // than assumes, so a guard that falls back to the column turns the
+      // expected 403 into a 200 and goes red. That is what closes the last way
+      // of reading the column — the snapshot-then-column shape that a plain
+      // read-the-column guard would fail on the positive cases alone.
+      issueId: DECOY_RUN_ISSUE_ID,
       contextSnapshot: {},
     });
     const app = await createApp(agentActor(OWN_AGENT_ID), "done");
@@ -372,5 +388,73 @@ describe("agent self-cancel of a run on a closed issue", () => {
       cancelledByActorType: "user",
       cancelledByUserId: "board-user",
     });
+  });
+
+  // Review finding of 2026-09-28, REK-272. The guard resolves the run's issue
+  // through readRunIssueId(readObject(existing.contextSnapshot)) because
+  // heartbeat_runs has no issue column: packages/db/src/schema/heartbeat_runs.ts
+  // only carries a JSONB index on (contextSnapshot ->> 'issueId'). The public
+  // GET /api/heartbeat-runs/{id} therefore answers "issueId": null, so
+  // `existing.issueId` is the shape that looks right and refuses every run —
+  // including the one stranded run this endpoint exists for.
+  //
+  // No other case in this file pins that. The two positive cases do catch a
+  // flip to `existing.issueId`, but only as a 403 where a 200 was expected: the
+  // coverage is 2 of 8 and it is incidental. Should a migration ever add and
+  // populate a real issue_id column, every case here would go green again while
+  // the guard kept reading the snapshot, and the suite would be watching the
+  // wrong source. So this case names the source directly: the run carries a
+  // *decoy* run-level issueId naming a different issue, and the assertion below
+  // fails if anything reads it.
+  it("resolves the run's issue from contextSnapshot and never reads a run-level issue column", async () => {
+    let runLevelIssueIdReads = 0;
+    const run = {
+      id: STUCK_RUN_ID,
+      companyId: COMPANY_ID,
+      agentId: OWN_AGENT_ID,
+      status: "running",
+      // A getter, so the assertion below can count reads. It answers a valid but
+      // wrong uuid instead of undefined: reading it must be a *silent* wrong
+      // answer, exactly as it would be in production.
+      get issueId() {
+        runLevelIssueIdReads += 1;
+        return DECOY_RUN_ISSUE_ID;
+      },
+      contextSnapshot: { issueId: CLOSED_ISSUE_ID },
+    };
+    // The decoy is genuinely present, otherwise "never read" would be vacuous.
+    expect("issueId" in run).toBe(true);
+    expect(runLevelIssueIdReads).toBe(0);
+
+    mockHeartbeatService.getRun.mockResolvedValue(run);
+    const app = await createApp(agentActor(OWN_AGENT_ID), "done");
+
+    const response = await request(app)
+      .post(`/api/heartbeat-runs/${STUCK_RUN_ID}/cancel`)
+      .send();
+
+    expect(response.status).toBe(200);
+    expect(mockHeartbeatService.cancelRun).toHaveBeenCalledTimes(1);
+    // Proves the closed issue was resolved out of the snapshot, rather than the
+    // route skipping the check altogether.
+    expect(issueStatusLookups).toBe(1);
+    expect(runLevelIssueIdReads).toBe(0);
+  });
+
+  // The schema half of the same finding, and the part that survives a migration.
+  // The case above pins the guard; this one pins the fact that makes the guard
+  // correct, so that a future migration adding a real issue_id fails here — with
+  // a message naming the guard — instead of quietly turning the case above back
+  // into an accident.
+  it("keeps contextSnapshot the only run→issue link, so the guard has nowhere else to read", () => {
+    const sqlNames = Object.values(getTableColumns(heartbeatRuns)).map((column) => column.name);
+
+    // If this ever fails: a real issue_id column was added. Re-check whether
+    // readRunIssueId in routes/agents.ts should now read it, and update the
+    // cancel guard and this case together — not one without the other.
+    expect(sqlNames).not.toContain("issue_id");
+    // native_issue_id is a different thing entirely: a *native* issue id, not a
+    // Paperclip issue id. It must not be mistaken for the run's own issue.
+    expect(sqlNames).toContain("native_issue_id");
   });
 });
