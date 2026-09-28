@@ -43,7 +43,7 @@ patchedDependencies:
     hash: gtvuasrdnibltgd6jvdqufvsdy
     path: patches/acpx@0.12.0.patch
   acpx@0.13.1:
-    hash: ikfco27aeue26z63kex2z5d5ce
+    hash: jxpmkytjzjh3vghha3pybg7k54
     path: patches/acpx@0.13.1.patch
   embedded-postgres@18.1.0-beta.16:
     hash: 55uhvnotpqyiy37rn3pqpukhei
@@ -508,7 +508,7 @@ importers:
         version: 0.156.0
       acpx:
         specifier: 0.13.1
-        version: 0.13.1(patch_hash=ikfco27aeue26z63kex2z5d5ce)
+        version: 0.13.1(patch_hash=jxpmkytjzjh3vghha3pybg7k54)
       ajv:
         specifier: ^8.20.0
         version: 8.20.0
@@ -950,8 +950,8 @@ importers:
         specifier: workspace:*
         version: link:../packages/skills-catalog
       '@photon-ai/advanced-imessage':
-        specifier: 2.1.0
-        version: 2.1.0(@grpc/grpc-js@1.14.4)(nice-grpc-common@2.0.4)(nice-grpc@2.1.17)
+        specifier: 2.2.0
+        version: 2.2.0(@grpc/grpc-js@1.14.4)(nice-grpc-common@2.0.4)(nice-grpc@2.1.17)
       '@vercel/connect':
         specifier: 0.6.1
         version: 0.6.1(@chat-adapter/slack@4.39.0(patch_hash=226jj24akljccsfbw7bcxujz4u)(zod@4.4.3))(better-auth@1.7.2(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(@opentelemetry/api@1.9.1)(kysely@0.29.5)(pg@8.18.0)(postgres@3.4.9(patch_hash=sryle6qd5qfmnxvoebal4gashi)))(pg@8.18.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.0.1(@noble/hashes@2.4.0))(tsx@4.23.12)))
@@ -960,7 +960,7 @@ importers:
         version: 8.18.0
       acpx:
         specifier: 0.13.1
-        version: 0.13.1(patch_hash=ikfco27aeue26z63kex2z5d5ce)
+        version: 0.13.1(patch_hash=jxpmkytjzjh3vghha3pybg7k54)
       ajv:
         specifier: ^8.20.0
         version: 8.20.0
@@ -3456,8 +3456,8 @@ packages:
   '@paralleldrive/cuid2@2.3.1':
     resolution: {integrity: sha512-XO7cAxhnTZl0Yggq6jOgjiOHhbgcO4NqFqwSmQpjK3b6TEE6Uj/jfSk6wzYyemh3+I0sHirKSetjQwn5cZktFw==}
 
-  '@photon-ai/advanced-imessage@2.1.0':
-    resolution: {integrity: sha512-KT/aCBWcq667alyKe8DclqDUa/0fUuW2ZYDCxfIKuQBm08U4JcNG56fCdNUd69MFkKkzZgW35j59EYsx5DnLcQ==}
+  '@photon-ai/advanced-imessage@2.2.0':
+    resolution: {integrity: sha512-WpRU/dAfPwZo6OZAwdKJ6YTmrJZAbhAVlO2skRucMmgyGHrhpyHt3p7ZJKvlkT900Fx7bFMN1VxheuV+jNh2KQ==}
     engines: {node: '>=18.17'}
     peerDependencies:
       '@grpc/grpc-js': ^1.12.6
@@ -11350,7 +11350,7 @@ snapshots:
     dependencies:
       '@noble/hashes': 1.8.0
 
-  '@photon-ai/advanced-imessage@2.1.0(@grpc/grpc-js@1.14.4)(nice-grpc-common@2.0.4)(nice-grpc@2.1.17)':
+  '@photon-ai/advanced-imessage@2.2.0(@grpc/grpc-js@1.14.4)(nice-grpc-common@2.0.4)(nice-grpc@2.1.17)':
     dependencies:
       '@bufbuild/protobuf': 2.15.0
     optionalDependencies:
@@ -13348,7 +13348,7 @@ snapshots:
       - bare-buffer
       - react-native-b4a
 
-  acpx@0.13.1(patch_hash=ikfco27aeue26z63kex2z5d5ce):
+  acpx@0.13.1(patch_hash=jxpmkytjzjh3vghha3pybg7k54):
     dependencies:
       '@agentclientprotocol/sdk': 1.4.0(zod@4.4.3)
       commander: 15.0.0
