@@ -6786,8 +6786,10 @@ registry.registerPath({
   path: "/api/heartbeat-runs/{runId}/cancel",
   tags: ["runs"],
   summary: "Cancel a heartbeat run",
+  description:
+    "Board operators may cancel any run. An agent may cancel only its own run, and only when that run's issue is already `done` or `cancelled` — a run on a live, `blocked`, or otherwise non-terminal issue is refused with 403, because otherwise the endpoint would be a way out of any assigned task. `x-paperclip-authorization` reports `board_or_agent` for this path because an agent can reach it at all; the terminal-issue condition is a separate rule and is not encoded in that marker.",
   request: { params: z.object({ runId: heartbeatRunIdParamSchema }) },
-  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden },
 });
 
 registry.registerPath({

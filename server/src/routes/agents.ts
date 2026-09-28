@@ -84,7 +84,7 @@ import {
 import { badRequest, conflict, forbidden, HttpError, notFound, unprocessable } from "../errors.js";
 import { ONBOARDING_FIRST_TASK_SKILL_KEY, PAPERCLIP_CORE_SKILL_KEYS } from "../services/company-skills.js";
 import { createRunSecretRedactionRegistry } from "../services/run-secret-redaction.js";
-import { assertAuthenticated, assertBoard, assertCompanyAccess, assertInstanceAdmin, buildActorSecretContext, getAccessibleResource, getActorInfo, hasCompanyAccess } from "./authz.js";
+import { assertAuthenticated, assertBoard, assertBoardOrAgent, assertCompanyAccess, assertInstanceAdmin, buildActorSecretContext, getAccessibleResource, getActorInfo, hasCompanyAccess } from "./authz.js";
 import { runAdapterLoginStartSpine } from "./adapter-login-route-spine.js";
 import { isLoginCommandSupportedAdapterType } from "../services/login-command.js";
 import {
@@ -301,6 +301,12 @@ function readRunIssueId(context: Record<string, unknown> | null) {
   const nestedIssueId = paperclipIssue?.id;
   return typeof nestedIssueId === "string" && isUuidLike(nestedIssueId) ? nestedIssueId : null;
 }
+
+// An agent may free its own concurrency slot only once the issue it was
+// working on is already closed. `blocked` is deliberately absent: a run on a
+// blocked issue is a run that is supposed to report the blockage, not one that
+// may walk away from it.
+const AGENT_CANCEL_TERMINAL_ISSUE_STATUSES = new Set<string>(["done", "cancelled"]);
 
 // Confirms a pre-existing `CODEX_HOME_<handle>` secret still names this
 // account's own home before a device login treats the secret's presence as a
@@ -6804,29 +6810,70 @@ export function agentRoutes(
   });
 
   router.post("/heartbeat-runs/:runId/cancel", async (req, res) => {
-    assertBoard(req);
+    assertBoardOrAgent(req);
     const runId = readHeartbeatRunId(req);
     const existing = await getAccessibleResource(req, res, heartbeat.getRun(runId), "Heartbeat run not found");
     if (!existing) return;
-    // Stamp the cancellation as operator-initiated (this route is board-only).
-    // Recovery reads this to stand down instead of classifying the cancelled
-    // run as agent stranding and re-waking the agent the operator just stopped.
-    const run = await heartbeat.cancelRun(runId, "Cancelled by a board operator", {
-      resultJson: {
-        cancelledByActorType: "user",
-        cancelledByUserId: req.actor.userId ?? null,
+    const byAgent = req.actor.type === "agent";
+    if (byAgent) {
+      // Ownership is compared on the agent, never on actor.runId. The run that
+      // observes a stranded predecessor is by definition a *different* run, so a
+      // runId comparison would deny exactly the case this path exists for. A
+      // colleague's run is never cancelable from here.
+      if (!req.actor.agentId || existing.agentId !== req.actor.agentId) {
+        throw forbidden("An agent may only cancel its own heartbeat runs");
+      }
+      const issueId = readRunIssueId(readObject(existing.contextSnapshot));
+      const issue = issueId
+        ? await db
+            .select({ status: issuesTable.status })
+            .from(issuesTable)
+            .where(and(eq(issuesTable.id, issueId), eq(issuesTable.companyId, existing.companyId)))
+            .then((rows) => rows[0] ?? null)
+        : null;
+      // Terminal-issue-only. Without this guard the endpoint is a back door:
+      // an agent could abandon any assigned task and declare victory. A run on
+      // a `blocked` issue is excluded on purpose — being blocked is a state to
+      // report on, not permission to give up.
+      if (!issue || !AGENT_CANCEL_TERMINAL_ISSUE_STATUSES.has(issue.status)) {
+        throw forbidden(
+          "An agent may only cancel a run whose issue is already done or cancelled",
+        );
+      }
+    }
+    // Stamp the cancellation as deliberate. Recovery reads this attribution to
+    // stand down instead of classifying the cancelled run as agent stranding and
+    // re-waking the very agent that just stopped it. Board actors keep the
+    // historical "user" stamp; an agent actor has no userId, so it stamps
+    // "agent" and must be recognized by the same recovery gate.
+    const run = await heartbeat.cancelRun(
+      runId,
+      byAgent ? "Cancelled by the owning agent on a closed issue" : "Cancelled by a board operator",
+      {
+        resultJson: byAgent
+          ? {
+              cancelledByActorType: "agent",
+              cancelledByAgentId: req.actor.agentId ?? null,
+            }
+          : {
+              cancelledByActorType: "user",
+              cancelledByUserId: req.actor.userId ?? null,
+            },
       },
-    });
+    );
 
     if (run) {
       await logActivity(db, {
         companyId: run.companyId,
-        actorType: "user",
-        actorId: req.actor.userId ?? "board",
+        actorType: byAgent ? "agent" : "user",
+        actorId: byAgent
+          ? (req.actor.agentId ?? "agent")
+          : (req.actor.userId ?? "board"),
+        runId: byAgent ? (req.actor.runId ?? null) : null,
         action: "heartbeat.cancelled",
         entityType: "heartbeat_run",
         entityId: run.id,
-        details: { agentId: run.agentId },
+        details: { agentId: run.agentId, cancelledByActorType: byAgent ? "agent" : "user" },
       });
     }
 

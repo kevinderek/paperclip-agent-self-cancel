@@ -16,6 +16,23 @@ it.each([{ runId: "other" }, { companyId: "other" }, { issueId: "other" }, { dis
     nativeCancellation: { ...run.resultJson.nativeCancellation, ...change } } })).toBe(false);
 });
 
+it("does not read an agent cancellation as an acknowledged native stop", () => {
+  // Measured, not assumed: the agent branch of the heartbeat-runs cancel route
+  // stamps cancelledByActorType "agent" and sets no nativeCancellation receipt,
+  // so this reader returns false for such a run. Nothing in the agent-cancel
+  // path may depend on it — the deliberate-stop exemption lives in
+  // recovery/service.ts instead. This test exists so a later change cannot
+  // quietly start leaning on a receipt that is never written.
+  const agentCancel = {
+    id: "run",
+    companyId: "company",
+    nativeIssueId: "issue",
+    status: "cancelled",
+    resultJson: { cancelledByActorType: "agent", cancelledByAgentId: "agent" },
+  };
+  expect(isAcknowledgedNativeStop(agentCancel)).toBe(false);
+  expect(isAcknowledgedNativeReassignmentStop(agentCancel)).toBe(false);
+});
 it("recognizes an audited handoff without granting operator Stop semantics", () => {
   const handoff = { ...run, resultJson: { reassignmentStopRequested: true, nativeCancellation: run.resultJson.nativeCancellation } };
   expect(isAcknowledgedNativeReassignmentStop(handoff)).toBe(true);
