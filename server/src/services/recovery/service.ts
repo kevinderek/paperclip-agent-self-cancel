@@ -837,14 +837,35 @@ function isStrandedIssueRecoveryIssue(
 }
 
 /**
- * True when the issue's latest run was cancelled by a board operator (the
- * board cancel route stamps the attribution; interrupt-by-comment uses the
- * operator_interrupted error code). While such a run is the latest activity
- * on an issue, recovery stands down entirely: the operator deliberately
- * stopped the agent, and re-waking it — or escalating "stranding" — would
- * fight the human. Any newer run or wake supersedes the exemption.
+ * Cancellation attributions that count as a deliberate stop rather than a
+ * failure. "user" is what the board cancel route has always stamped;
+ * "board" is accepted for older rows. "agent" is stamped by the agent-facing
+ * branch of the same route, which only fires on an already-closed issue.
+ *
+ * Leaving "agent" out of this set is the trap: recovery would classify the
+ * agent's own cancel as stranding and re-wake the agent that just stopped
+ * itself, turning a one-off cleanup into an endless wake/cancel loop. Any
+ * unrecognized attribution stays on the recovery path on purpose — an unknown
+ * stamp is not proof that a human meant to stop the agent.
  */
-function isOperatorCancelledRun(
+const DELIBERATE_CANCEL_ACTOR_TYPES = new Set(["user", "board", "agent"]);
+
+/**
+ * True when the issue's latest run was deliberately stopped (a board operator
+ * cancelled it, an operator interrupted it, or the owning agent cancelled its
+ * own run on an already-closed issue). While such a run is the latest activity
+ * on an issue, recovery stands down entirely: someone deliberately ended that
+ * turn, and re-waking it — or escalating "stranding" — would fight that
+ * decision. Any newer run or wake supersedes the exemption.
+ *
+ * Exported for the hermetic test in ./operator-cancelled-run.test.ts. The
+ * database-backed suite in ../../__tests__/issue-recovery-actions.test.ts
+ * proves the end-to-end stand-down, but it needs an embedded Postgres cluster
+ * whose startup carries a 30s per-hook budget; this predicate is pure and must
+ * stay provable without a database, because it is the one that decides whether
+ * the agent that just cancelled itself gets woken again.
+ */
+export function isOperatorCancelledRun(
   latestRun: LatestIssueRun,
   currentAgentId: string,
 ): boolean {
@@ -859,9 +880,8 @@ function isOperatorCancelledRun(
   if (!latestRun || latestRun.status !== "cancelled") return false;
   if (latestRun.errorCode === "operator_interrupted") return true;
   const result = parseObject(latestRun.resultJson);
-  return (
-    result.cancelledByActorType === "user" ||
-    result.cancelledByActorType === "board"
+  return DELIBERATE_CANCEL_ACTOR_TYPES.has(
+    readNonEmptyString(result.cancelledByActorType) ?? "",
   );
 }
 

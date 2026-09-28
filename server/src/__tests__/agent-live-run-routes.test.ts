@@ -459,13 +459,28 @@ describe("agent live run routes", () => {
     it("keeps board and instance-admin checks ahead of malformed-ID validation", async () => {
       const app = await createApp({}, { type: "agent", companyId: "company-1", agentId: routeAgentId });
       for (const [method, suffix] of routes.filter(([, suffix]) =>
-        suffix === "/cancel" || suffix === "/runtime-requests/approval-1/resolve" || suffix.startsWith("/provider-trace"),
+        // /cancel is no longer board-only: an agent may reach it for its own run
+        // on an already-closed issue, so a malformed id legitimately answers 400
+        // for that actor. Its authz ordering is covered below with an actor that
+        // is genuinely not allowed on the route, and its agent rules live in
+        // agent-self-cancel-run-routes.test.ts.
+        suffix !== "/cancel" &&
+        (suffix === "/runtime-requests/approval-1/resolve" || suffix.startsWith("/provider-trace")),
       )) {
         const response = await requestApp(app, (url) =>
           request(url)[method](`/api/heartbeat-runs/undefined${suffix}`).send({}),
         );
         expect(response.status, `${method} ${suffix}`).toBe(403);
       }
+      expect(mockHeartbeatService.getRun).not.toHaveBeenCalled();
+    });
+
+    it("still refuses /cancel before ID validation to an actor that may not use it", async () => {
+      const app = await createApp({}, { type: "none", source: "none" });
+      const response = await requestApp(app, (url) =>
+        request(url).post(`/api/heartbeat-runs/undefined/cancel`).send({}),
+      );
+      expect(response.status).toBe(403);
       expect(mockHeartbeatService.getRun).not.toHaveBeenCalled();
     });
   });

@@ -861,6 +861,35 @@ describeEmbeddedPostgres("issue recovery actions", () => {
     expect(enqueueWakeup).not.toHaveBeenCalled();
   });
 
+  it("stands down after the owning agent cancelled its own run on a closed issue", async () => {
+    const { companyId, coderId, sourceIssueId } = await seedCompany();
+    await db.insert(heartbeatRuns).values({
+      id: randomUUID(),
+      companyId,
+      agentId: coderId,
+      invocationSource: "manual",
+      status: "cancelled",
+      error: "Cancelled by the owning agent on a closed issue",
+      errorCode: "cancelled",
+      resultJson: { cancelledByActorType: "agent", cancelledByAgentId: coderId },
+      startedAt: new Date("2026-07-15T20:00:00.000Z"),
+      finishedAt: new Date("2026-07-15T20:01:00.000Z"),
+      contextSnapshot: { issueId: sourceIssueId },
+    });
+    const enqueueWakeup = vi.fn(async () => null);
+    const recovery = recoveryService(db, { enqueueWakeup });
+
+    const result = await recovery.reconcileStrandedAssignedIssues();
+
+    // Without "agent" in the deliberate-stop set this count is 0 and the run is
+    // classified as agent stranding, which re-wakes the agent that just stopped
+    // itself. That is the loop this exemption exists to prevent.
+    expect(result.operatorCancelExempted).toBe(1);
+    expect(result.escalated).toBe(0);
+    expect(await db.select().from(issueRecoveryActions)).toHaveLength(0);
+    expect(enqueueWakeup).not.toHaveBeenCalled();
+  });
+
   it("still recovers system-cancelled runs with no operator attribution", async () => {
     const { companyId, coderId, sourceIssueId } = await seedCompany();
     await db.insert(heartbeatRuns).values({
